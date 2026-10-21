@@ -1,0 +1,174 @@
+AIR QUALITY INDEX (AQI) PREDICTION
+Interview Preparation Report
+============================================================
+
+PROJECT SUMMARY
+----------------
+I built an end-to-end machine learning regression pipeline that predicts
+observed daily AQI from six measured pollutant concentrations. The project
+downloads and uses real city-day observations from the Kaggle "Air Quality
+Data in India" dataset. It includes data cleaning, preprocessing, model
+selection and tuning, chronological train/test evaluation, model saving,
+and a command-line inference tool.
+
+PROBLEM AND TARGET
+------------------
+Problem type: Supervised regression.
+Target: Observed AQI value, a numeric value from 0 to 500 for this project.
+The model estimates AQI as a number. This is not an AQI-category
+classification model, so classification accuracy is not the right metric.
+
+DATASET
+-------
+Source: Rohan Rao, Air Quality Data in India, Kaggle.
+File used: data/kaggle_city_day.csv (city_day.csv from the Kaggle archive).
+Coverage: Daily observations for Indian cities, 2015 through 2020.
+Original rows: 29,531.
+Rows retained after requiring a valid date and an observed AQI between 0
+and 500: 24,307.
+
+Input features used by the real-data model:
+  - PM2.5
+  - PM10
+  - NO2
+  - SO2
+  - CO
+  - O3
+
+The Kaggle city_day.csv file does not include temperature or humidity. The
+real-data model therefore uses the six pollutant columns only. The separate
+sample-data generator is synthetic and was not used for the reported test
+results.
+
+DATA PREPARATION AND PREPROCESSING
+----------------------------------
+1. Parse the Date column and remove rows with an invalid date or missing AQI.
+2. Keep AQI targets from 0 through 500; discard out-of-range target values.
+3. Sort observations by date.
+4. Handle missing pollutant values with median imputation.
+5. Cap pollutant outliers using training-fitted IQR fences.
+6. Standardize features with StandardScaler.
+
+Imputation, outlier caps, and scaling are inside an sklearn Pipeline. This
+means their parameters are learned from training data within each CV fold,
+then reused for validation and inference rather than being fitted on the
+full dataset first.
+
+TRAIN / TEST DESIGN
+-------------------
+The data is split chronologically by distinct date, not randomly by row.
+The cutoff date was 2019-05-27. Dates before the cutoff were used for
+training; the cutoff date and later observations were reserved for testing.
+
+Training rows: 15,567
+Test rows:      8,740
+Test period:    2019-05-27 onward, through 2020-07-01 in this dataset.
+
+This setup better reflects predicting later observations from earlier data.
+Every city record for a date falls on the same side of the cutoff.
+
+MODEL AND TUNING
+----------------
+Model: XGBoost XGBRegressor with squared-error regression objective.
+
+Why XGBoost:
+  - AQI and pollutant relationships can be nonlinear and threshold-like.
+  - Boosted trees can learn feature interactions without requiring a linear
+    relationship between each pollutant and AQI.
+  - It is a strong tabular-data model and supports reproducible training.
+
+Hyperparameter search: GridSearchCV with three-fold shuffled KFold inside
+the training period. The selection score was negative RMSE. The best
+parameters from the reported run were:
+  learning_rate = 0.05
+  max_depth     = 5
+  n_estimators  = 220
+  subsample     = 0.9
+
+HELD-OUT TEST RESULTS
+---------------------
+RMSE: 28.440 AQI points
+MAE:  17.752 AQI points
+R2:   0.8829
+
+How to explain the results:
+  - MAE says predictions differed from observed AQI by about 17.8 points on
+    average in absolute terms.
+  - RMSE is about 28.4 points; it penalizes larger errors more strongly than
+    MAE does.
+  - R2 of 0.8829 means the model explained about 88.3% of the AQI variation
+    in this held-out historical period, relative to predicting the test-set
+    mean.
+  - This is promising performance for a project, but an error around 18 AQI
+    points can move a reading across a category boundary when the true value
+    is near that boundary. This is not official AQI reporting performance.
+
+The word "accuracy" is usually used for classification. For this regression
+project, report RMSE, MAE, and R2 instead of saying "88.3% accuracy".
+
+ARTIFACTS AND INFERENCE
+-----------------------
+Training script: src/train.py
+Prediction script: src/predict.py
+Saved artifact: models/aqi_xgboost_model.joblib
+The artifact contains the fitted preprocessing/model pipeline and feature
+names. The CLI supports one reading or a CSV batch with the six feature
+columns.
+
+Example commands:
+  python data/download_kaggle_data.py
+  python src/train.py
+  python src/predict.py --pm25 42 --pm10 91 --no2 38 --so2 12 --co 0.7 --o3 64
+  python src/predict.py --input readings.csv
+
+60-SECOND INTERVIEW PITCH
+-------------------------
+"I built an AQI regression pipeline using India's historical city-day air
+quality data from Kaggle. It predicts the observed AQI from PM2.5, PM10, NO2,
+SO2, CO, and O3. I used an sklearn Pipeline for median imputation, IQR-based
+outlier capping, and scaling, followed by a tuned XGBoost regressor. To make
+the evaluation more realistic, I trained on earlier dates and tested on
+later dates rather than randomly mixing time. On 8,740 held-out records, the
+model achieved RMSE 28.44, MAE 17.75, and R2 0.8829. I also saved the fitted
+pipeline with Joblib and added single-record and batch CLI inference. I would
+next compare against simple baselines and evaluate errors by city and AQI
+category before considering real-world use."
+
+LIKELY FOLLOW-UP QUESTIONS
+--------------------------
+Q: Why is this regression rather than classification?
+A: The target is a numeric AQI value. If the goal were only to predict labels
+   such as Good, Moderate, or Poor, I would formulate and evaluate a separate
+   classification model.
+
+Q: Why not use accuracy?
+A: Accuracy requires discrete class predictions. RMSE, MAE, and R2 are
+   appropriate for numeric regression targets.
+
+Q: How did you reduce data leakage?
+A: I used a date-based holdout and fitted imputation, IQR caps, and scaling
+   inside the training pipeline. The test period was not used to tune the
+   final reported score.
+
+Q: What does MAE 17.752 mean?
+A: Across the held-out records, the absolute difference between predicted
+   and observed AQI was 17.752 points on average.
+
+Q: What are the current limitations?
+A: The dataset is historical, some rows are excluded because the target is
+   missing or outside 0-500, and the model has not been compared here with a
+   DummyRegressor or linear baseline. Results have not been validated on a
+   city-held-out split, a newer dataset, or a live prospective deployment.
+   Temperature and humidity are not available in the selected Kaggle file.
+
+Q: What would you improve next?
+A: Add naive and linear baselines, examine residuals by city and AQI bucket,
+   test city-held-out generalization, use time-aware cross-validation, and
+   quantify how often predictions cross AQI category thresholds.
+
+IMPORTANT INTERPRETATION NOTE
+-----------------------------
+The reported score is an offline evaluation on a chronological holdout from
+one historical Kaggle dataset. It does not guarantee current air-quality
+performance, and the model should not replace official monitoring or
+regulatory AQI calculations.
